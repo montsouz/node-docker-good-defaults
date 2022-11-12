@@ -8,74 +8,42 @@ on:
       - main
     # don't rebuild image if someone only edited unrelated files
     paths-ignore:
-      - 'README.md'
-      - '.github/linters/**'
+      - "README.md"
+      - ".github/linters/**"
   pull_request:
     # don't rebuild image if someone only edited unrelated files
     paths-ignore:
-      - 'README.md'
-      - '.github/linters/**'
+      - "README.md"
+      - ".github/linters/**"
 
 jobs:
   call-docker-build:
-
-    name: Call Docker Build
-
-    uses: bretfisher/docker-build-workflow/.github/workflows/reusable-docker-build.yaml@main
-
+    name: "Build docker"
+    runs-on: ubuntu-latest
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
     permissions:
+      id-token: write
       contents: read
-      packages: write # needed to push docker image to ghcr.io
-      pull-requests: write # needed to create and update comments in PRs
-    
-    secrets:
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      # Only needed if with:dockerhub-enable is true below
-      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
-      # Only needed if with:dockerhub-enable is true below
-      # https://hub.docker.com/settings/security
-      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-    with:
-      
-      ### REQUIRED
-      ### ENABLE ONE OR BOTH REGISTRIES
-      ### tell docker where to push.
-      ### NOTE if Docker Hub is set to true, you must set secrets above and also add account/repo/tags below
-      dockerhub-enable: true
-      ghcr-enable: true
-
-      ### REQUIRED 
-      ### A list of the account/repo names for docker build. List should match what's enabled above
-      ### defaults to:
-      image-names: |
-        ghcr.io/${{ github.repository }}
-
-      ### REQUIRED set rules for tagging images, based on special action syntax:
-      ### https://github.com/docker/metadata-action#tags-input
-      ### defaults to:
-      tag-rules: |
-        type=raw,value=latest,enable=${{ endsWith(github.ref, github.event.repository.default_branch) }}
-        type=ref,event=pr
-        type=ref,event=branch
-        type=semver,pattern={{version}}
-        type=raw,value=gha-${{ github.run_id }}
-      
-      ### path to where docker should copy files into image
-      ### defaults to root of repository (.)
-      # context: .
-      
-      ### Dockerfile alternate name. Default is Dockerfile (relative to context path)
-      # file: Containerfile
-
-      ### build stage to target, defaults to empty, which builds to last stage in Dockerfile
-      # target:
-      
-      ### platforms to build for, defaults to linux/amd64
-      ### other options: linux/amd64,linux/arm64,linux/arm/v7
-      # platforms: linux/amd64
-      
-      ### Create a PR comment with image tags and labels
-      ### defaults to false
-      # comment-enable: false
+      - name: Build, tag, and push docker image to Amazon ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: my-ecr-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker compose build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
